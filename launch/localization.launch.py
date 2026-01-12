@@ -85,7 +85,7 @@ def generate_launch_description():
 
         # --- MAIN LOCALIZATION NODE ---
         Node(
-            package='rtabmap_slam', executable='rtabmap', output='screen',
+            package='rtabmap_ros', executable='rtabmap', output='screen',
             parameters=parameters,
             remappings=remappings,
             # NOTE: removed arguments=['-d'] so we DO NOT delete the map
