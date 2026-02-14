@@ -1,4 +1,3 @@
-import os
 from launch import LaunchDescription
 from launch_ros.actions import Node
 from launch.actions import DeclareLaunchArgument
@@ -7,8 +6,8 @@ from launch.substitutions import LaunchConfiguration
 def generate_launch_description():
     
     # --- CONFIGURATION ---
-    # Default to FALSE for live flying, TRUE if testing with bag
-    use_sim_time = LaunchConfiguration('use_sim_time') 
+    # We force Sim Time to TRUE because this is for the simulation workflow
+    use_sim_time = True
     database_path = LaunchConfiguration('database_path')
     
     # 1. RTAB-Map Parameters (Localization Mode)
@@ -16,7 +15,7 @@ def generate_launch_description():
           'frame_id': 'base_link',
           'odom_frame_id': 'odom',
           'subscribe_depth': True,
-          'subscribe_odom_info': False, # Usually False for localization to save bandwidth
+          'subscribe_odom_info': False,
           'approx_sync': True,
           'wait_imu_to_init': False,
           'use_sim_time': use_sim_time,
@@ -26,69 +25,50 @@ def generate_launch_description():
           'Mem/IncrementalMemory': 'false',  # STOP Mapping (Localization only)
           'Mem/InitWMWithAllNodes': 'true',  # Load the whole map into RAM
           
-          # Performance Tuning (Optional for Pi)
-          'Rtabmap/DetectionRate': '2',      # Run detection at 2Hz
-          'Kp/MaxFeatures': '400',           # Limit features to save CPU
-
-          # Sync Tolerance
-          'queue_size': 50,
-          'approx_sync_max_interval': 0.1,
-          
-          # QoS Compatibility
+          # Performance & Sync
+          'queue_size': 20,
           'qos_image': 2,
           'qos_camera_info': 2,
     }]
 
-    # 2. Topic Remappings (Matches your "Fixed" topics)
+    # 2. Topic Remappings (Matches our "Clean Slate" topics)
     remappings=[
           ('imu', '/mavros/imu/data'),
-          ('rgb/image', '/camera/fixed'),            # Consumes data from restamper
-          ('rgb/camera_info', '/camera_info/fixed'), 
-          ('depth/image', '/depth_camera/fixed'),    
+          ('rgb/image', '/camera'),            # Raw topic from Gazebo Bridge
+          ('rgb/camera_info', '/camera_info'), 
+          ('depth/image', '/depth_camera'),    
           ('odom', '/mavros/local_position/odom')
     ]
 
     return LaunchDescription([
         
-        # Args
-        DeclareLaunchArgument('use_sim_time', default_value='false', description='Set true for replay'),
         DeclareLaunchArgument('database_path', default_value='~/.ros/rtabmap.db'),
 
         # --- BRIDGE 1: Odom Topic -> TF Transform ---
-        # Ensures map->odom->base_link chain exists
+        # Using our new "Foolproof" bridge from midcone_sim_v2
         Node(
             package='midcone_rtabmap',
             executable='odom_to_tf',
             output='screen',
-            parameters=[{'use_sim_time': use_sim_time}],
-            remappings=[('odom', '/mavros/local_position/odom')] 
+            # FIX: Pass use_sim_time here so the node starts in the correct time mode
+            parameters=[{'use_sim_time': use_sim_time}] 
         ),
 
         # --- BRIDGE 2: Base -> Camera Transform ---
+        # FORCED SIM TIME to prevent "TF OLD DATA"
         Node(
             package='tf2_ros',
             executable='static_transform_publisher',
-            arguments = ['--x', '0.1', '--y', '0', '--z', '0', 
-                         '--yaw', '-1.5707', '--pitch', '0', '--roll', '-1.5707', 
-                         '--frame-id', 'base_link', 
-                         '--child-frame-id', 'camera_link']
-        ),
-
-        # --- BRIDGE 3: Fix Camera Timestamps (The Restamper) ---
-        # Takes real camera topics and publishes to /camera/fixed
-        Node(
-            package='midcone_rtabmap',
-            executable='restamper',
-            output='screen',
-            parameters=[{'use_sim_time': use_sim_time}]
+            parameters=[{'use_sim_time': use_sim_time}],
+            arguments = ['0.1', '0', '0', '-1.57', '0', '-1.57', 'base_link', 'camera_link']
         ),
 
         # --- MAIN LOCALIZATION NODE ---
         Node(
-            package='rtabmap_ros', executable='rtabmap', output='screen',
+            package='rtabmap_slam', executable='rtabmap', output='screen',
             parameters=parameters,
             remappings=remappings,
-            # NOTE: removed arguments=['-d'] so we DO NOT delete the map
+            # CRITICAL: No '-d' argument here. We want to LOAD the map, not delete it.
         ),
 
         # --- VISUALIZER ---
