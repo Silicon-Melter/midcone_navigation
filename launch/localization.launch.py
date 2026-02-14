@@ -7,7 +7,7 @@ def generate_launch_description():
     
     # --- CONFIGURATION ---
     # We force Sim Time to TRUE because this is for the simulation workflow
-    use_sim_time = True
+    use_sim_time = LaunchConfiguration('use_sim_time')
     database_path = LaunchConfiguration('database_path')
     
     # 1. RTAB-Map Parameters (Localization Mode)
@@ -15,17 +15,16 @@ def generate_launch_description():
           'frame_id': 'base_link',
           'odom_frame_id': 'odom',
           'subscribe_depth': True,
-          'subscribe_odom_info': False,
+          'subscribe_odom_info': False, # We use our own odom
           'approx_sync': True,
-          'wait_imu_to_init': False,
+          'wait_imu_to_init': False, # Don't wait for IMU if using external odom
           'use_sim_time': use_sim_time,
           'database_path': database_path,
           
-          # --- KEY LOCALIZATION CHANGES ---
-          'Mem/IncrementalMemory': 'false',  # STOP Mapping (Localization only)
-          'Mem/InitWMWithAllNodes': 'true',  # Load the whole map into RAM
+          # LOCALIZATION MODE
+          'Mem/IncrementalMemory': 'false', 
+          'Mem/InitWMWithAllNodes': 'true', 
           
-          # Performance & Sync
           'queue_size': 20,
           'qos_image': 2,
           'qos_camera_info': 2,
@@ -34,16 +33,16 @@ def generate_launch_description():
     # 2. Topic Remappings (Matches our "Clean Slate" topics)
     remappings=[
           ('imu', '/mavros/imu/data'),
-          ('rgb/image', '/camera'),            # Raw topic from Gazebo Bridge
-          ('rgb/camera_info', '/camera_info'), 
-          ('depth/image', '/depth_camera'),    
+          ('rgb/image', '/camera/camera/color/image_raw/uncompressed'), 
+          ('rgb/camera_info', '/camera/camera/aligned_depth_to_color/camera_info'), 
+          ('depth/image', '/camera/camera/aligned_depth_to_color/image_raw/uncompressed'),
           ('odom', '/mavros/local_position/odom')
     ]
 
     return LaunchDescription([
         
-        DeclareLaunchArgument('database_path', default_value='~/.ros/rtabmap.db'),
-
+        DeclareLaunchArgument('database_path', default_value='~/mavros.db'),
+        DeclareLaunchArgument('use_sim_time', default_value='true'),
         # --- BRIDGE 1: Odom Topic -> TF Transform ---
         # Using our new "Foolproof" bridge from midcone_sim_v2
         Node(
@@ -68,7 +67,6 @@ def generate_launch_description():
             package='rtabmap_slam', executable='rtabmap', output='screen',
             parameters=parameters,
             remappings=remappings,
-            # CRITICAL: No '-d' argument here. We want to LOAD the map, not delete it.
         ),
 
         # --- VISUALIZER ---
