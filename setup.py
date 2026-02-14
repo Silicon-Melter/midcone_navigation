@@ -27,7 +27,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'odom_to_tf = midcone_rtabmap.odom_to_tf:main',
+            'odom_to_tf = midcone_navigation.odom_to_tf:main',
         ],
     },
 )
