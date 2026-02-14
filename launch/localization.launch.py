@@ -47,7 +47,7 @@ def generate_launch_description():
         # --- BRIDGE 1: Odom Topic -> TF Transform ---
         # Using our new "Foolproof" bridge from midcone_sim_v2
         Node(
-            package='midcone_rtabmap',
+            package='midcone_navigation',
             executable='odom_to_tf',
             output='screen',
             # FIX: Pass use_sim_time here so the node starts in the correct time mode
