@@ -117,4 +117,23 @@ def generate_launch_description():
                 ('odom', '/mavros/odometry/out') # Listen to EKF
             ]
         ),
+        Node(
+            package='rtabmap_viz',
+            executable='rtabmap_viz',
+            output='screen',
+            parameters=[{
+                'frame_id': 'base_link',
+                'use_sim_time': LaunchConfiguration('use_sim_time'),
+                'subscribe_depth': True,
+                'subscribe_odom_info': False, # Listening to the EKF odom
+                'approx_sync': True,
+                'queue_size': 20,
+            }],
+            remappings=[
+                ('rgb/image', '/camera/camera/color/image_raw'),
+                ('rgb/camera_info', '/camera/camera/color/camera_info'),
+                ('depth/image', '/camera/camera/aligned_depth_to_color/image_raw'),
+                ('odom', '/mavros/odometry/out') # Listen to the fused EKF output
+            ]
+        ),
     ])
