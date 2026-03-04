@@ -1,97 +1,119 @@
 import os
 from launch import LaunchDescription
 from launch_ros.actions import Node
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, ExecuteProcess, TimerAction
 from launch.substitutions import LaunchConfiguration
 
 def generate_launch_description():
     
+    # --- 1. ARGUMENTS ---
     use_sim_time = DeclareLaunchArgument('use_sim_time', default_value='false')
-    database_path = DeclareLaunchArgument('database_path', default_value='~/mavros.db')
+    
+    # Using os.path.expanduser safely resolves '~' to '/home/user/'
+    database_path = DeclareLaunchArgument(
+        'database_path', 
+        default_value=os.path.expanduser('~/mavros.db')
+    )
 
-    # ---------------------------------------------------------
-    # 1. EKF CONFIGURATION (robot_localization)
-    # ---------------------------------------------------------
-    ekf_config = {
-        'frequency': 30.0,
-        'sensor_timeout': 0.1,
-        'two_d_mode': False,          # FALSE because drones fly in 3D
-        'publish_tf': True,           # Publish odom -> base_link
-        'map_frame': 'map',
-        'odom_frame': 'odom',
-        'base_link_frame': 'base_link',
-        'world_frame': 'odom',
-        'print_diagnostics': True,    # CRITICAL: Tells you why it fails in /diagnostics
-
-        # INPUT 1: VIO (Trust Position & Velocity)
-        'odom0': '/visual_odom',
-        # X, Y, Z, Roll, Pitch, Yaw, Vx, Vy, Vz, Vroll, Vpitch, Vyaw, Ax, Ay, Az
-        'odom0_config': [True,  True,  True,   # Trust X, Y, Z
-                         False, False, False,  # Ignore VIO orientation (use IMU)
-                         True,  True,  True,   # Trust linear velocity
-                         False, False, False, 
-                         False, False, False],
-        'odom0_differential': False,
-        'odom0_relative': False,
-
-        # INPUT 2: IMU (Trust Orientation & Angular Velocity)
-        'imu0': '/mavros/imu/data',
-        'imu0_config': [False, False, False, 
-                        True,  True,  True,    # Trust Roll, Pitch, Yaw
-                        False, False, False, 
-                        True,  True,  True,    # Trust Angular Velocity
-                        True,  True,  True],   # Trust Linear Acceleration
-        'imu0_differential': False,
-        'imu0_relative': False,
-        'imu0_remove_gravitational_acceleration': True, # MAVROS IMU includes gravity
-    }
-
-    # ---------------------------------------------------------
-    # 2. VIO CONFIGURATION
-    # ---------------------------------------------------------
+    # --- 2. VIO CONFIGURATION (rgbd_odometry) ---
     vio_parameters = [{
         'frame_id': 'base_link',
         'subscribe_depth': True,
         'subscribe_rgb': True,
         'subscribe_odom_info': False,
         'approx_sync': True,
+        'wait_imu_to_init': True,
         'use_sim_time': LaunchConfiguration('use_sim_time'),
-        'publish_tf': False,  # EKF handles TF now
+        
+        # RTAB-Map specific parameters MUST be strings
+        'Odom/Strategy': '0',
+        'Odom/GuessMotion': 'True',
+        'Odom/ResetCountdown': '1',
+        'Vis/FeatureType': '8',
+        'publish_tf': False,  # EKF will handle TF
     }]
 
-    # ---------------------------------------------------------
-    # 3. LOCALIZATION (MAP) CONFIGURATION
-    # ---------------------------------------------------------
+    vio_remappings = [
+        ('imu', '/mavros/imu/data'),
+        ('rgb/image', '/camera/camera/color/image_raw'),
+        ('rgb/camera_info', '/camera/camera/color/camera_info'),
+        ('depth/image', '/camera/camera/aligned_depth_to_color/image_raw'),
+        ('odom', '/visual_odom') # Internal topic sent to EKF
+    ]
+
+    # --- 3. EKF FUSION CONFIGURATION (robot_localization) ---
+    ekf_config = {
+        'frequency': 30.0,
+        'sensor_timeout': 0.1,
+        'two_d_mode': False,
+        'publish_tf': True, # Publishes odom -> base_link
+        'map_frame': 'map',
+        'odom_frame': 'odom',
+        'base_link_frame': 'base_link',
+        'world_frame': 'odom',
+        'print_diagnostics': True,
+
+        # INPUT 1: VIO (Trust Position & Linear Velocity)
+        'odom0': '/visual_odom',
+        'odom0_config': [True,  True,  True,   # X, Y, Z
+                         False, False, False,  # Roll, Pitch, Yaw (Ignored)
+                         True,  True,  True,   # Vx, Vy, Vz
+                         False, False, False,  # VRoll, VPitch, VYaw
+                         False, False, False], # Ax, Ay, Az
+        'odom0_differential': False,
+        'odom0_relative': False,
+
+        # INPUT 2: IMU (Trust Orientation & Angular Velocity)
+        'imu0': '/mavros/imu/data',
+        'imu0_config': [False, False, False, 
+                        True,  True,  True,    # Roll, Pitch, Yaw
+                        False, False, False, 
+                        True,  True,  True,    # VRoll, VPitch, VYaw
+                        True,  True,  True],   # Ax, Ay, Az
+        'imu0_differential': False,
+        'imu0_relative': False,
+        'imu0_remove_gravitational_acceleration': True,
+    }
+
+    # --- 4. MAP LOCALIZATION CONFIGURATION (rtabmap) ---
     slam_parameters = [{
         'frame_id': 'base_link',
         'subscribe_depth': True,
-        'subscribe_odom_info': False, # Changed: Listen to standard odom msg
+        'subscribe_odom_info': False, 
         'approx_sync': True,
         'use_sim_time': LaunchConfiguration('use_sim_time'),
         'database_path': LaunchConfiguration('database_path'),
-        'Mem/IncrementalMemory': 'false', 
-        'Mem/InitWMWithAllNodes': 'true',
+        
+        # STRICT LOCALIZATION OVERRIDES (Must be strings)
+        'Mem/IncrementalMemory': 'False', 
+        'Mem/InitWMWithAllNodes': 'True',
+        'RGBD/NeighborLinkRefining': 'True',
+        
+        'queue_size': 20,
     }]
+
+    slam_remappings = [
+        ('imu', '/mavros/imu/data'),
+        ('rgb/image', '/camera/camera/color/image_raw'),
+        ('rgb/camera_info', '/camera/camera/color/camera_info'),
+        ('depth/image', '/camera/camera/aligned_depth_to_color/image_raw'),
+        ('odom', '/mavros/odometry/out') # Listen to the fused EKF output
+    ]
 
     return LaunchDescription([
         use_sim_time,
         database_path,
 
-        # 1. VIO Node
+        # NODE 1: Visual Odometry (VIO)
         Node(
             package='rtabmap_odom', 
             executable='rgbd_odometry', 
             output='screen',
             parameters=vio_parameters,
-            remappings=[
-                ('rgb/image', '/camera/camera/color/image_raw'),
-                ('rgb/camera_info', '/camera/camera/color/camera_info'),
-                ('depth/image', '/camera/camera/aligned_depth_to_color/image_raw'),
-                ('odom', '/visual_odom') # Send to EKF
-            ]
+            remappings=vio_remappings
         ),
 
-        # 2. EKF Node
+        # NODE 2: EKF Fusion
         Node(
             package='robot_localization',
             executable='ekf_node',
@@ -99,41 +121,43 @@ def generate_launch_description():
             output='screen',
             parameters=[ekf_config, {'use_sim_time': LaunchConfiguration('use_sim_time')}],
             remappings=[
-                # Output directly to PX4
-                ('odometry/filtered', '/mavros/odometry/out') 
+                ('odometry/filtered', '/mavros/odometry/out') # Direct to PX4
             ]
         ),
 
-        # 3. Map Localization Node
+        # NODE 3: Map Localization (SLAM Engine)
         Node(
             package='rtabmap_slam',
             executable='rtabmap',
             output='screen',
             parameters=slam_parameters,
-            remappings=[
-                ('rgb/image', '/camera/camera/color/image_raw'),
-                ('rgb/camera_info', '/camera/camera/color/camera_info'),
-                ('depth/image', '/camera/camera/aligned_depth_to_color/image_raw'),
-                ('odom', '/mavros/odometry/out') # Listen to EKF
-            ]
+            remappings=slam_remappings,
+            arguments=[] # Empty arguments ensures NO '-d' (does not delete map)
         ),
+
+        # NODE 4: Visualizer (rtabmap_viz)
         Node(
             package='rtabmap_viz',
             executable='rtabmap_viz',
             output='screen',
-            parameters=[{
-                'frame_id': 'base_link',
-                'use_sim_time': LaunchConfiguration('use_sim_time'),
-                'subscribe_depth': True,
-                'subscribe_odom_info': False, # Listening to the EKF odom
-                'approx_sync': True,
-                'queue_size': 20,
-            }],
-            remappings=[
-                ('rgb/image', '/camera/camera/color/image_raw'),
-                ('rgb/camera_info', '/camera/camera/color/camera_info'),
-                ('depth/image', '/camera/camera/aligned_depth_to_color/image_raw'),
-                ('odom', '/mavros/odometry/out') # Listen to the fused EKF output
+            parameters=slam_parameters, # Shares the exact same parameters as SLAM
+            remappings=slam_remappings
+        ),
+
+        # NODE 5: Auto-Download Map Trigger
+        # Waits 5 seconds for the database to load, then forces rtabmap_viz to show the cloud
+        TimerAction(
+            period=5.0, 
+            actions=[
+                ExecuteProcess(
+                    cmd=[
+                        'ros2', 'service', 'call', 
+                        '/rtabmap/publish_map', 
+                        'rtabmap_msgs/srv/PublishMap', 
+                        '{global_map: true, optimized: true, graph_only: false}'
+                    ],
+                    output='screen'
+                )
             ]
         ),
     ])
